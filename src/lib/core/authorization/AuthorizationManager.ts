@@ -51,6 +51,8 @@ export type AuthorizationManagerConfiguration = {
   defaultScopes?: string | false;
 };
 
+type Overrides = Partial<ConstructorParameters<typeof RedirectTransport>[0]>;
+
 const DEFAULT_CONFIGURATION = {
   useRefreshTokens: false,
   defaultScopes: 'openid profile email',
@@ -300,9 +302,10 @@ export class AuthorizationManager {
     options: {
       shouldReplace: GetTokenOptions['shouldReplace'];
     } = { shouldReplace: true },
+    overrides?: Overrides,
   ) {
     log('debug', 'AuthorizationManager.handleCodeRedirect');
-    const response = await this.#buildTransport().getToken({
+    const response = await this.#buildTransport(overrides).getToken({
       shouldReplace: options?.shouldReplace,
     });
     if (isGlobusAuthTokenResponse(response)) {
@@ -321,9 +324,17 @@ export class AuthorizationManager {
    * @param response - The error response from a Globus service.
    * @param execute - Whether to execute the handler immediately or return a function that can be executed later.
    */
-  handleErrorResponse(response: Record<string, unknown>, execute?: true): void;
-  handleErrorResponse(response: Record<string, unknown>, execute?: false): () => void;
-  handleErrorResponse(response: Record<string, unknown>, execute = true) {
+  handleErrorResponse(
+    response: Record<string, unknown>,
+    execute?: true,
+    overrides?: Overrides,
+  ): void;
+  handleErrorResponse(
+    response: Record<string, unknown>,
+    execute?: false,
+    overrides?: Overrides,
+  ): () => void;
+  handleErrorResponse(response: Record<string, unknown>, execute = true, overrides?: Overrides) {
     log(
       'debug',
       `AuthorizationManager.handleErrorResponse | response=${JSON.stringify(response)} execute=${execute}`,
@@ -334,11 +345,11 @@ export class AuthorizationManager {
         'debug',
         'AuthorizationManager.handleErrorResponse | error=AuthorizationRequirementsError',
       );
-      handler = () => this.handleAuthorizationRequirementsError(response);
+      handler = () => this.handleAuthorizationRequirementsError(response, overrides);
     }
     if (isConsentRequiredError(response)) {
       log('debug', 'AuthorizationManager.handleErrorResponse | error=ConsentRequiredError');
-      handler = () => this.handleConsentRequiredError(response);
+      handler = () => this.handleConsentRequiredError(response, overrides);
     }
     if ('code' in response && response['code'] === 'AuthenticationFailed') {
       log('debug', 'AuthorizationManager.handleErrorResponse | error=AuthenticationFailed');
@@ -351,7 +362,10 @@ export class AuthorizationManager {
    * Process a well-formed Authorization Requirements error response from a Globus service
    * and redirect the user to the Globus Auth login page with the necessary parameters.
    */
-  handleAuthorizationRequirementsError(response: AuthorizationRequirementsError) {
+  handleAuthorizationRequirementsError(
+    response: AuthorizationRequirementsError,
+    overrides?: Overrides,
+  ) {
     this.#transport = this.#buildTransport({
       params: {
         session_message: response.authorization_parameters.session_message,
@@ -361,6 +375,7 @@ export class AuthorizationManager {
         session_required_single_domain:
           response.authorization_parameters.session_required_single_domain.join(','),
         prompt: 'login',
+        ...overrides?.params,
       },
     });
     this.#transport.send();
@@ -370,9 +385,10 @@ export class AuthorizationManager {
    * Process a well-formed `ConsentRequired` error response from a Globus service
    * and redirect the user to the Globus Auth login page with the necessary parameters.
    */
-  handleConsentRequiredError(response: ConsentRequiredError) {
+  handleConsentRequiredError(response: ConsentRequiredError, overrides?: Overrides) {
     this.#transport = this.#buildTransport({
       requested_scopes: this.#withOfflineAccess(response.required_scopes.join(' ')),
+      ...overrides,
     });
     this.#transport.send();
   }
